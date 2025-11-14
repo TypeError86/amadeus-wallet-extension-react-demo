@@ -14,6 +14,20 @@ interface UseAmadeusResult {
 
 const PROVIDER_READY_EVENT = 'amadeus#initialized'
 const ACCOUNTS_CHANGED_EVENT = 'accountsChanged'
+const STATUS_REFRESH_INTERVAL_MS = 5000
+
+const extractAccountFromProviderResults = (
+	accountResult: PromiseSettledResult<string | null>,
+	connectionResult: PromiseSettledResult<boolean | string>
+): string | null => {
+	if (accountResult.status === 'fulfilled' && accountResult.value) {
+		return accountResult.value
+	}
+	if (connectionResult.status === 'fulfilled' && connectionResult.value) {
+		return typeof connectionResult.value === 'string' ? connectionResult.value : null
+	}
+	return null
+}
 
 export function useAmadeus(): UseAmadeusResult {
 	const [provider, setProvider] = useState<AmadeusProvider | null>(null)
@@ -42,15 +56,18 @@ export function useAmadeus(): UseAmadeusResult {
 			setStatus('available')
 
 			try {
-				const connected = await detectedProvider.isConnected()
-				setIsWalletUnlocked(connected)
-
 				const existingAccount = await detectedProvider.getAccount()
 				if (existingAccount) {
 					setAccount(existingAccount)
+					setIsWalletUnlocked(true)
+				} else {
+					setAccount(null)
+					setIsWalletUnlocked(false)
 				}
 			} catch (error) {
 				console.error('Failed to get account from Amadeus provider', error)
+				setAccount(null)
+				setIsWalletUnlocked(false)
 			}
 		} else {
 			setStatus('not-found')
@@ -81,6 +98,50 @@ export function useAmadeus(): UseAmadeusResult {
 			provider.off(ACCOUNTS_CHANGED_EVENT, listener)
 		}
 	}, [handleAccountsChanged, provider])
+
+	useEffect(() => {
+		if (!provider) return
+
+		let cancelled = false
+
+		const updateWalletStatus = async () => {
+			if (cancelled) return
+
+			try {
+				const [accountResult, connectionResult] = await Promise.allSettled([
+					provider.getAccount(),
+					provider.isConnected()
+				])
+
+				if (cancelled) return
+
+				const account = extractAccountFromProviderResults(accountResult, connectionResult)
+				setAccount(account)
+				setIsWalletUnlocked(Boolean(account))
+			} catch (error) {
+				if (cancelled) return
+				console.error('Failed to refresh wallet status', error)
+				setAccount(null)
+				setIsWalletUnlocked(false)
+			}
+		}
+
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === 'visible' && !cancelled) {
+				void updateWalletStatus()
+			}
+		}
+
+		const intervalId = window.setInterval(updateWalletStatus, STATUS_REFRESH_INTERVAL_MS)
+		document.addEventListener('visibilitychange', handleVisibilityChange)
+		void updateWalletStatus()
+
+		return () => {
+			cancelled = true
+			clearInterval(intervalId)
+			document.removeEventListener('visibilitychange', handleVisibilityChange)
+		}
+	}, [provider])
 
 	const connect = useCallback(async () => {
 		if (!provider) throw new Error('Amadeus provider unavailable')

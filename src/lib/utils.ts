@@ -46,7 +46,7 @@ export async function submitTransaction(
 	const bytes = new Uint8Array(txPacked)
 	const endpoint = apiEndpoint.replace(/\/$/, '')
 
-	const response = await fetch(`${endpoint}/tx/submit`, {
+	const response = await fetch(`${endpoint}/tx/submit_and_wait`, {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/octet-stream',
